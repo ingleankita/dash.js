@@ -183,7 +183,7 @@ app.controller('DashController', ['$scope', '$window', 'sources', 'contributors'
     $scope.additionalAbrRules = {};
     $scope.mediaSettingsCacheEnabled = true;
     $scope.metricsTimer = null;
-    $scope.updateMetricsInterval = 1000;
+    $scope.updateMetricsInterval = 8000; // Change to 8 seconds
     $scope.drmKeySystems = ['com.widevine.alpha', 'com.microsoft.playready', 'org.w3.clearkey'];
     $scope.drmKeySystem = '';
     $scope.drmLicenseURL = '';
@@ -454,6 +454,7 @@ app.controller('DashController', ['$scope', '$window', 'sources', 'contributors'
         $scope.metricsTimer = setInterval(function () {
             updateMetrics('video');
             updateMetrics('audio');
+            collectMetricsEvery8Seconds('video');
             $scope.chartCount++;
         }, $scope.updateMetricsInterval);
     }, $scope);
@@ -1917,6 +1918,57 @@ app.controller('DashController', ['$scope', '$window', 'sources', 'contributors'
         $scope.clearChartData();
         $scope.sessionStartTime = new Date().getTime() / 1000;
     };
+
+    function collectMetricsEvery8Seconds(type) {
+        var dashMetrics = $scope.player.getDashMetrics();
+        var dashAdapter = $scope.player.getDashAdapter();
+        var requests = dashMetrics.getHttpRequests('video')
+
+        // Get the buffer level (second)
+        var bufferLevel = dashMetrics.getCurrentBufferLevel(type, true);
+
+        // Get the measured throughput (Mbps)
+        var mtp = $scope.player.getAverageThroughput(type);
+
+        // Get the latency (average over the four last requested segments)
+        var latency = {};
+
+        var requestWindow = requests.slice(-20).filter(function (req) {
+            return req.responsecode >= 200 && req.responsecode < 300 && req.type === 'MediaSegment' && req._stream === type && !!req._mediaduration;
+        }).slice(-4);
+
+        if (requestWindow.length > 0) {
+            var latencyTimes = requestWindow.map(function (req) {
+                return Math.abs(req.tresponse.getTime() - req.trequest.getTime()) / 1000;
+            });
+
+            latency[type] = {
+                average: latencyTimes.reduce(function (l, r) {
+                    return l + r;
+                }) / latencyTimes.length,
+                high: latencyTimes.reduce(function (l, r) {
+                    return l < r ? r : l;
+                }),
+                low: latencyTimes.reduce(function (l, r) {
+                    return l < r ? l : r;
+                }),
+                count: latencyTimes.length
+            };
+            
+            console.log("********** COMP 445 Lab 2 Part 2 - Metrics after 8 seconds **********")
+            console.log(`Latency (average over the four last requested segments): ${latency.video.average}`)
+            console.log(`Measured throughput: ${(mtp / 1000).toFixed(3)} Mbps`)
+            console.log(`Buffer level: ${bufferLevel} seconds`)
+
+            var repSwitch = dashMetrics.getCurrentRepresentationSwitch('video', true);
+            var period = dashAdapter.getPeriodById($scope.currentStreamInfo.id);
+            var periodIdx = period ? period.index : $scope.currentStreamInfo.index;
+            var bitrate = repSwitch ? Math.round(dashAdapter.getBandwidthForRepresentation(repSwitch.to, periodIdx) / 1000) : NaN;
+            console.log(`Bitrate: ${bitrate} kbps`)
+
+        }
+        return null;
+    }
 
     function calculateHTTPMetrics(type, requests) {
         var latency = {},
